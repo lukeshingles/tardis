@@ -18,12 +18,25 @@ np.import_array()
 
 ctypedef np.int64_t int_type_t
 
+cdef extern from "numpy/arrayobject.h":
+    void PyArray_ENABLEFLAGS(np.ndarray arr, int flags)
+
+cdef c_array_to_numpy(void *ptr, int dtype, np.npy_intp N):
+    cdef np.ndarray arr = np.PyArray_SimpleNewFromData(1, &N, dtype, ptr)
+    PyArray_ENABLEFLAGS(arr, np.NPY_OWNDATA)
+    return arr
+
 cdef extern from "src/cmontecarlo.h":
     ctypedef enum ContinuumProcessesStatus:
         CONTINUUM_OFF = 0
         CONTINUUM_ON = 1
 
     cdef int LOG_VPACKETS
+
+    ctypedef struct photo_xsect_1level:
+        double *nu
+        double *x_sect
+        int_type_t no_of_points
 
     ctypedef struct storage_model_t:
         double *packet_nus
@@ -36,6 +49,7 @@ cdef extern from "src/cmontecarlo.h":
         int_type_t *last_line_interaction_out_id
         int_type_t *last_line_interaction_shell_id
         int_type_t *last_interaction_type
+        int_type_t *last_interaction_out_type
         int_type_t no_of_packets
         int_type_t no_of_shells
         double *r_inner
@@ -50,6 +64,7 @@ cdef extern from "src/cmontecarlo.h":
         double *continuum_list_nu
         int_type_t line_lists_tau_sobolevs_nd
         double *line_lists_j_blues
+        double *line_lists_Edotlu
         int_type_t line_lists_j_blues_nd
         int_type_t no_of_lines
         int_type_t no_of_edges
@@ -73,7 +88,8 @@ cdef extern from "src/cmontecarlo.h":
         double inverse_sigma_thomson
         double inner_boundary_albedo
         int_type_t reflective_inner_boundary
-        double *chi_bf_tmp_partial
+        photo_xsect_1level ** photo_xsect
+        double *chi_ff_factor
         double *t_electrons
         double *l_pop
         double *l_pop_r
@@ -86,13 +102,31 @@ cdef extern from "src/cmontecarlo.h":
         int_type_t *virt_packet_last_line_interaction_out_id
         int_type_t virt_packet_count
         int_type_t virt_array_size
+        int_type_t kpacket2macro_level
+        int_type_t *cont_edge2macro_level
+        double *photo_ion_estimator
+        double *stim_recomb_estimator
+        int_type_t *photo_ion_estimator_statistics
+        double *bf_heating_estimator
+        double *ff_heating_estimator
+        double *stim_recomb_cooling_estimator
 
     void montecarlo_main_loop(storage_model_t * storage, int_type_t virtual_packet_flag, int nthreads, unsigned long seed)
 
+cdef extern from "src/integrator.h":
+    double *_formal_integral(
+            const storage_model_t *storage,
+            double T,
+            double *nu,
+            int_type_t nu_size,
+            double *att_S_ul,
+            double *Jred_lu,
+            double *Jblue_lu,
+            int N)
 
 
 
-cdef initialize_storage_model(model, runner, storage_model_t *storage):
+cdef initialize_storage_model(model, plasma, runner, storage_model_t *storage):
     """
     Initializing the storage struct.
 
@@ -104,8 +138,7 @@ cdef initialize_storage_model(model, runner, storage_model_t *storage):
     storage.packet_energies = <double*> PyArray_DATA(runner.input_energy)
 
     # Setup of structure
-    structure = model.tardis_config.structure
-    storage.no_of_shells = structure.no_of_shells
+    storage.no_of_shells = model.no_of_shells
 
 
     storage.r_inner = <double*> PyArray_DATA(runner.r_inner_cgs)
@@ -114,22 +147,20 @@ cdef initialize_storage_model(model, runner, storage_model_t *storage):
 
     # Setup the rest
     # times
-    storage.time_explosion = model.tardis_config.supernova.time_explosion.to(
-        's').value
+    storage.time_explosion = model.time_explosion.to('s').value
     storage.inverse_time_explosion = 1.0 / storage.time_explosion
     #electron density
     storage.electron_densities = <double*> PyArray_DATA(
-        model.plasma_array.electron_densities.values)
+        plasma.electron_densities.values)
 
     runner.inverse_electron_densities = (
-        1.0 / model.plasma_array.electron_densities.values)
+        1.0 / plasma.electron_densities.values)
     storage.inverse_electron_densities = <double*> PyArray_DATA(
         runner.inverse_electron_densities)
     # Switch for continuum processes
     storage.cont_status = CONTINUUM_OFF
     # Continuum data
     cdef np.ndarray[double, ndim=1] continuum_list_nu
-    cdef np.ndarray[double, ndim =1] chi_bf_tmp_partial
     cdef np.ndarray[double, ndim=1] l_pop
     cdef np.ndarray[double, ndim=1] l_pop_r
 
@@ -137,18 +168,16 @@ cdef initialize_storage_model(model, runner, storage_model_t *storage):
         continuum_list_nu = np.array([9.0e14, 8.223e14, 6.0e14, 3.5e14, 3.0e14])  # sorted list of threshold frequencies
         storage.continuum_list_nu = <double*> continuum_list_nu.data
         storage.no_of_edges = continuum_list_nu.size
-        chi_bf_tmp_partial = np.zeros(continuum_list_nu.size)
-        storage.chi_bf_tmp_partial = <double*> chi_bf_tmp_partial.data
         l_pop = np.ones(storage.no_of_shells * continuum_list_nu.size, dtype=np.float64)
         storage.l_pop = <double*> l_pop.data
         l_pop_r = np.ones(storage.no_of_shells * continuum_list_nu.size, dtype=np.float64)
         storage.l_pop_r = <double*> l_pop_r.data
 
     # Line lists
-    storage.no_of_lines = model.atom_data.lines.nu.values.size
-    storage.line_list_nu = <double*> PyArray_DATA(model.atom_data.lines.nu.values)
+    storage.no_of_lines = plasma.atomic_data.lines.nu.values.size
+    storage.line_list_nu = <double*> PyArray_DATA(plasma.atomic_data.lines.nu.values)
     runner.line_lists_tau_sobolevs = (
-            model.plasma_array.tau_sobolevs.values.flatten(order='F')
+            plasma.tau_sobolevs.values.flatten(order='F')
             )
     storage.line_lists_tau_sobolevs = <double*> PyArray_DATA(
             runner.line_lists_tau_sobolevs
@@ -156,31 +185,34 @@ cdef initialize_storage_model(model, runner, storage_model_t *storage):
     storage.line_lists_j_blues = <double*> PyArray_DATA(
             runner.j_blue_estimator)
 
+    storage.line_lists_Edotlu = <double*> PyArray_DATA(
+            runner.Edotlu_estimator)
+
     storage.line_interaction_id = runner.get_line_interaction_id(
-        model.tardis_config.plasma.line_interaction_type)
+        runner.line_interaction_type)
 
     # macro atom & downbranch
     if storage.line_interaction_id >= 1:
         runner.transition_probabilities = (
-                model.plasma_array.transition_probabilities.values.flatten(order='F')
+                plasma.transition_probabilities.values.flatten(order='F')
         )
         storage.transition_probabilities = <double*> PyArray_DATA(
                 runner.transition_probabilities
                 )
         storage.transition_probabilities_nd = (
-        model.plasma_array.transition_probabilities.values.shape[0])
+        plasma.transition_probabilities.values.shape[0])
         storage.line2macro_level_upper = <int_type_t*> PyArray_DATA(
-            model.atom_data.lines_upper2macro_reference_idx)
+            plasma.atomic_data.lines_upper2macro_reference_idx)
         storage.macro_block_references = <int_type_t*> PyArray_DATA(
-            model.atom_data.macro_atom_references['block_references'].values)
+            plasma.atomic_data.macro_atom_references['block_references'].values)
         storage.transition_type = <int_type_t*> PyArray_DATA(
-            model.atom_data.macro_atom_data['transition_type'].values)
+            plasma.atomic_data.macro_atom_data['transition_type'].values)
 
         # Destination level is not needed and/or generated for downbranch
         storage.destination_level_id = <int_type_t*> PyArray_DATA(
-            model.atom_data.macro_atom_data['destination_level_idx'].values)
+            plasma.atomic_data.macro_atom_data['destination_level_idx'].values)
         storage.transition_line_id = <int_type_t*> PyArray_DATA(
-            model.atom_data.macro_atom_data['lines_idx'].values)
+            plasma.atomic_data.macro_atom_data['lines_idx'].values)
 
     storage.output_nus = <double*> PyArray_DATA(runner._output_nu)
     storage.output_energies = <double*> PyArray_DATA(runner._output_energy)
@@ -199,26 +231,26 @@ cdef initialize_storage_model(model, runner, storage_model_t *storage):
     storage.js = <double*> PyArray_DATA(runner.j_estimator)
     storage.nubars = <double*> PyArray_DATA(runner.nu_bar_estimator)
 
-    storage.spectrum_start_nu = model.tardis_config.spectrum.frequency.value.min()
-    storage.spectrum_end_nu = model.tardis_config.spectrum.frequency.value.max()
-    storage.spectrum_virt_start_nu = model.tardis_config.montecarlo.virtual_spectrum_range.end.to('Hz', units.spectral()).value
-    storage.spectrum_virt_end_nu = model.tardis_config.montecarlo.virtual_spectrum_range.start.to('Hz', units.spectral()).value
-    storage.spectrum_delta_nu = model.tardis_config.spectrum.frequency.value[1] - model.tardis_config.spectrum.frequency.value[0]
+    storage.spectrum_start_nu = runner.spectrum_frequency.to('Hz').value.min()
+    storage.spectrum_end_nu = runner.spectrum_frequency.to('Hz').value.max()
+    # TODO: Linspace handling for virtual_spectrum_range
+    storage.spectrum_virt_start_nu = runner.virtual_spectrum_range.stop.to('Hz', units.spectral()).value
+    storage.spectrum_virt_end_nu = runner.virtual_spectrum_range.start.to('Hz', units.spectral()).value
+    storage.spectrum_delta_nu = runner.spectrum_frequency.to('Hz').value[1] - runner.spectrum_frequency.to('Hz').value[0]
 
     storage.spectrum_virt_nu = <double*> PyArray_DATA(
-        runner.legacy_montecarlo_virtual_luminosity)
+        runner._montecarlo_virtual_luminosity.value)
 
-    storage.sigma_thomson = (
-        model.tardis_config.montecarlo.sigma_thomson.cgs.value)
+    storage.sigma_thomson = runner.sigma_thomson.cgs.value
     storage.inverse_sigma_thomson = 1.0 / storage.sigma_thomson
-    storage.reflective_inner_boundary = model.tardis_config.montecarlo.enable_reflective_inner_boundary
-    storage.inner_boundary_albedo = model.tardis_config.montecarlo.inner_boundary_albedo
+    storage.reflective_inner_boundary = runner.enable_reflective_inner_boundary
+    storage.inner_boundary_albedo = runner.inner_boundary_albedo
     # Data for continuum implementation
-    cdef np.ndarray[double, ndim=1] t_electrons = model.plasma_array.t_electrons
+    cdef np.ndarray[double, ndim=1] t_electrons = plasma.t_electrons
     storage.t_electrons = <double*> t_electrons.data
 
-def montecarlo_radial1d(model, runner, int_type_t virtual_packet_flag=0,
-                        int nthreads=4):
+def montecarlo_radial1d(model, plasma, runner, int_type_t virtual_packet_flag=0,
+                        int nthreads=4,last_run=False):
     """
     Parameters
     ----------
@@ -249,38 +281,19 @@ def montecarlo_radial1d(model, runner, int_type_t virtual_packet_flag=0,
 
     cdef storage_model_t storage
 
-    initialize_storage_model(model, runner, &storage)
+    initialize_storage_model(model, plasma, runner, &storage)
 
-    montecarlo_main_loop(&storage, virtual_packet_flag, nthreads,
-                         model.tardis_config.montecarlo.seed)
-    cdef np.ndarray[double, ndim=1] virt_packet_nus = np.zeros(storage.virt_packet_count, dtype=np.float64)
-    cdef np.ndarray[double, ndim=1] virt_packet_energies = np.zeros(storage.virt_packet_count, dtype=np.float64)
-    cdef np.ndarray[double, ndim=1] virt_packet_last_interaction_in_nu = np.zeros(storage.virt_packet_count, dtype=np.float64)
-    cdef np.ndarray[int_type_t, ndim=1] virt_packet_last_interaction_type = np.zeros(storage.virt_packet_count, dtype=np.int64)
-    cdef np.ndarray[int_type_t, ndim=1] virt_packet_last_line_interaction_in_id = np.zeros(storage.virt_packet_count, dtype=np.int64)
-    cdef np.ndarray[int_type_t, ndim=1] virt_packet_last_line_interaction_out_id = np.zeros(storage.virt_packet_count, dtype=np.int64)
+    montecarlo_main_loop(&storage, virtual_packet_flag, nthreads, runner.seed)
     runner.virt_logging = LOG_VPACKETS
     if LOG_VPACKETS != 0:
-        for i in range(storage.virt_packet_count):
-            virt_packet_nus[i] = storage.virt_packet_nus[i]
-            virt_packet_energies[i] = storage.virt_packet_energies[i]
-            virt_packet_last_interaction_in_nu[i] = storage.virt_packet_last_interaction_in_nu[i]
-            virt_packet_last_interaction_type[i] = storage.virt_packet_last_interaction_type[i]
-            virt_packet_last_line_interaction_in_id[i] = storage.virt_packet_last_line_interaction_in_id[i]
-            virt_packet_last_line_interaction_out_id[i] = storage.virt_packet_last_line_interaction_out_id[i]
-        free(<void *>storage.virt_packet_nus)
-        free(<void *>storage.virt_packet_energies)
-        free(<void *>storage.virt_packet_last_interaction_in_nu)
-        free(<void *>storage.virt_packet_last_interaction_type)
-        free(<void *>storage.virt_packet_last_line_interaction_in_id)
-        free(<void *>storage.virt_packet_last_line_interaction_out_id)
-        runner.virt_packet_nus = virt_packet_nus
-        runner.virt_packet_energies = virt_packet_energies
-        runner.virt_packet_last_interaction_in_nu = virt_packet_last_interaction_in_nu
-        runner.virt_packet_last_interaction_type = virt_packet_last_interaction_type
-        runner.virt_packet_last_line_interaction_in_id = virt_packet_last_line_interaction_in_id
-        runner.virt_packet_last_line_interaction_out_id = virt_packet_last_line_interaction_out_id
-    #return output_nus, output_energies, js, nubars, last_line_interaction_in_id, last_line_interaction_out_id, last_interaction_type, last_line_interaction_shell_id, virt_packet_nus, virt_packet_energies
+        runner.virt_packet_nus = c_array_to_numpy(storage.virt_packet_nus, np.NPY_DOUBLE, storage.virt_packet_count)
+        runner.virt_packet_energies = c_array_to_numpy(storage.virt_packet_energies, np.NPY_DOUBLE, storage.virt_packet_count)
+        runner.virt_packet_last_interaction_in_nu = c_array_to_numpy(storage.virt_packet_last_interaction_in_nu, np.NPY_DOUBLE, storage.virt_packet_count)
+        runner.virt_packet_last_interaction_type = c_array_to_numpy(storage.virt_packet_last_interaction_type, np.NPY_INT64, storage.virt_packet_count)
+        runner.virt_packet_last_line_interaction_in_id = c_array_to_numpy(storage.virt_packet_last_line_interaction_in_id, np.NPY_INT64,
+                                                                          storage.virt_packet_count)
+        runner.virt_packet_last_line_interaction_out_id = c_array_to_numpy(storage.virt_packet_last_line_interaction_out_id, np.NPY_INT64,
+                                                                           storage.virt_packet_count)
     else:
         runner.virt_packet_nus = np.zeros(0)
         runner.virt_packet_energies = np.zeros(0)
@@ -288,3 +301,27 @@ def montecarlo_radial1d(model, runner, int_type_t virtual_packet_flag=0,
         runner.virt_packet_last_interaction_type = np.zeros(0)
         runner.virt_packet_last_line_interaction_in_id = np.zeros(0)
         runner.virt_packet_last_line_interaction_out_id = np.zeros(0)
+
+
+# This will be a method of the Simulation object
+def formal_integral(self, nu, N):
+    cdef storage_model_t storage
+
+    initialize_storage_model(self.model, self.plasma, self.runner, &storage)
+
+    res = self.make_source_function()
+    att_S_ul = res[0].flatten(order='F')
+    Jred_lu = res[1].flatten(order='F')
+    Jblue_lu = res[2].flatten(order='F')
+
+    cdef double *L = _formal_integral(
+            &storage,
+            self.model.t_inner.value,
+            <double*> PyArray_DATA(nu),
+            nu.shape[0],
+            <double*> PyArray_DATA(att_S_ul),
+            <double*> PyArray_DATA(Jred_lu),
+            <double*> PyArray_DATA(Jblue_lu),
+            N
+            )
+    return c_array_to_numpy(L, np.NPY_DOUBLE, nu.shape[0])

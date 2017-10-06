@@ -4,12 +4,14 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 import numpy as np
 import pandas as pd
 
+
 __all__ = ['BasePlasmaProperty', 'BaseAtomicDataProperty',
            'HiddenPlasmaProperty', 'Input', 'ArrayInput', 'DataFrameInput',
            'ProcessingPlasmaProperty', 'PreviousIterationProperty']
 
 logger = logging.getLogger(__name__)
 
+import os
 
 class BasePlasmaProperty(object):
     """
@@ -61,6 +63,8 @@ class BasePlasmaProperty(object):
                     'latex_description',
                     ''))
         return latex_label.replace('\\', r'\\')
+
+
 
 
 class ProcessingPlasmaProperty(BasePlasmaProperty):

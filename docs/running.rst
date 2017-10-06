@@ -1,8 +1,8 @@
 .. _running:
 
-**************
-Running TARDIS
-**************
+****************
+Quickstart Guide
+****************
 
 To run TARDIS requires two files. The atomic database (for more info refer to :ref:`atomic-data-download`) and a
 configuration file (more info at :ref:`config-file`).
@@ -10,7 +10,8 @@ configuration file (more info at :ref:`config-file`).
 Running TARDIS in the commandline
 =================================
 
-After installing TARDIS just download the example directory `<https://www.dropbox.com/s/svvyr5i7m8ouzdt/tardis_example.tar.gz>`_
+After installing TARDIS just download the `example directory
+<http://opensupernova.org/~ftsamis/tardis_example.tar.gz>`_
 and run TARDIS with:
 
 
@@ -19,7 +20,6 @@ and run TARDIS with:
     tar zxvf tardis_example.tar.gz
     cd tardis_example
     tardis tardis_example.yml output_spectrum.dat
-
 
 
 Then plot the output_spectrum.dat with your favourite plotting program. Here's an example how to do this with python.
@@ -31,14 +31,11 @@ Then plot the output_spectrum.dat with your favourite plotting program. Here's a
     >>> tardis_spec = loadtxt('output_spectrum.dat')
     >>> plot(tardis_spec[:,0], tardis_spec[:,1])
 
-
 More atomic datasets can be downloaded from :ref:`atomic-data-download`.
 
 
-
-
-Running TARDIS interactively
-============================
+Running TARDIS interactively (recommended)
+==========================================
 
 To get more information from each run of TARDIS one can run it interactively and
 have full access to the model properties
@@ -54,6 +51,7 @@ This model can then be used for inspecting the run as described
 
 Graphical User Interface
 ========================
+
 To get a detailed explanation on gui layout go to :ref:`gui_explanation` .
 
 **To setup and run the GUI(under development) follow these steps:**

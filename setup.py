@@ -22,8 +22,12 @@ from astropy_helpers.git_helpers import get_git_devstr
 from astropy_helpers.version_helpers import generate_version_py
 
 # Get some values from the setup.cfg
-from distutils import config
-conf = config.ConfigParser()
+try:
+    from ConfigParser import ConfigParser
+except ImportError:
+    from configparser import ConfigParser
+
+conf = ConfigParser()
 conf.read(['setup.cfg'])
 metadata = dict(conf.items('metadata'))
 
@@ -90,6 +94,7 @@ package_info = get_package_info()
 # Add the project-global data
 package_info['package_data'].setdefault(PACKAGENAME, [])
 package_info['package_data'][PACKAGENAME].append('data/*')
+package_info['package_data'][PACKAGENAME].append('io/schemas/*')
 
 # Define entry points for command-line scripts
 entry_points = {}
@@ -100,6 +105,10 @@ for hook in [('prereleaser', 'middle'), ('releaser', 'middle'),
     hook_name = 'astropy.release.' + '.'.join(hook)
     hook_func = 'astropy.utils.release:' + '_'.join(hook)
     entry_points[hook_ep] = ['%s = %s' % (hook_name, hook_func)]
+
+entry_points['console_scripts'] = [
+    'tardis_test_runner = tardis.tests.integration_tests.runner:run_tests'
+]
 
 #from Cython.Build import cythonize
 #package_info['ext_modules'] = cythonize(package_info['ext_modules'])
@@ -119,9 +128,7 @@ setup(name=PACKAGENAME + '-sn',
       version=VERSION,
       description=DESCRIPTION,
       scripts=scripts,
-      requires=['astropy'],
       install_requires=['astropy'],
-      provides=[PACKAGENAME],
       author=AUTHOR,
       author_email=AUTHOR_EMAIL,
       license=LICENSE,

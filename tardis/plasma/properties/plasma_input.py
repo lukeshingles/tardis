@@ -1,7 +1,8 @@
 from tardis.plasma.properties.base import (Input, ArrayInput, DataFrameInput)
 
 __all__ = ['TRadiative', 'DilutionFactor', 'AtomicData', 'Abundance', 'Density',
-           'TimeExplosion', 'JBlues', 'LinkTRadTElectron']
+           'TimeExplosion', 'JBlueEstimator', 'LinkTRadTElectron',
+           'HeliumTreatment', 'RInner', 'TInner', 'Volume']
 
 class TRadiative(ArrayInput):
     """
@@ -30,6 +31,7 @@ class AtomicData(Input):
     atomic_data : Object
     """
     outputs = ('atomic_data',)
+
 
 class Abundance(Input):
     """
@@ -60,15 +62,15 @@ class TimeExplosion(Input):
     outputs = ('time_explosion',)
     latex_name = ('t_{\\textrm{exp}}',)
 
-class JBlues(DataFrameInput):
+
+class JBlueEstimator(ArrayInput):
     """
     Attributes
     ----------
-    j_blues : Pandas DataFrame
-              Mean intensity in the blue wing of each line.
+    j_blue_estimators : Numpy array
     """
-    outputs = ('j_blues',)
-    latex_name = ('J_{lu}^{b}',)
+    outputs = ('j_blue_estimators',)
+    latex_name = ('J_{\\textrm{blue-estimator}}',)
 
 class LinkTRadTElectron(Input):
     """
@@ -80,3 +82,15 @@ class LinkTRadTElectron(Input):
     """
     outputs = ('link_t_rad_t_electron',)
     latex_name = ('T_{\\textrm{electron}}/T_{\\textrm{rad}}',)
+
+class HeliumTreatment(Input):
+    outputs = ('helium_treatment',)
+
+class RInner(Input):
+    outputs = ('r_inner',)
+
+class TInner(Input):
+    outputs = ('t_inner',)
+
+class Volume(Input):
+    outputs = ('volume',)

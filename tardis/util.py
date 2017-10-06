@@ -6,9 +6,10 @@ import numpy as np
 import os
 import yaml
 import re
-
+import tardis
 import logging
-import atomic
+
+from collections import OrderedDict
 
 
 k_B_cgs = constants.k_B.cgs.value
@@ -47,126 +48,136 @@ class MalformedQuantityError(MalformedError):
         return 'Expecting a quantity string(e.g. "5 km/s") for keyword - supplied %s' % self.malformed_quantity_string
 
 
-
 logger = logging.getLogger(__name__)
 
-synpp_default_yaml_fname = os.path.join(os.path.dirname(__file__), 'data', 'synpp_default.yaml')
+tardis_dir = os.path.realpath(tardis.__path__[0])
 
-def int_to_roman(input):
-   """
-   from http://code.activestate.com/recipes/81611-roman-numerals/
-   Convert an integer to Roman numerals.
 
-   Examples:
-   >>> int_to_roman(0)
-   Traceback (most recent call last):
-   ValueError: Argument must be between 1 and 3999
+def get_data_path(fname):
+    return os.path.join(tardis_dir, 'data', fname)
 
-   >>> int_to_roman(-1)
-   Traceback (most recent call last):
-   ValueError: Argument must be between 1 and 3999
 
-   >>> int_to_roman(1.5)
-   Traceback (most recent call last):
-   TypeError: expected integer, got <type 'float'>
+def get_tests_data_path(fname):
+    return os.path.join(tardis_dir, 'tests', 'data', fname)
 
-   >>> for i in range(1, 21): print int_to_roman(i)
-   ...
-   I
-   II
-   III
-   IV
-   V
-   VI
-   VII
-   VIII
-   IX
-   X
-   XI
-   XII
-   XIII
-   XIV
-   XV
-   XVI
-   XVII
-   XVIII
-   XIX
-   XX
-   >>> print int_to_roman(2000)
-   MM
-   >>> print int_to_roman(1999)
-   MCMXCIX
-   """
-   input = int(input)
-   if type(input) != type(1):
-      raise TypeError, "expected integer, got %s" % type(input)
-   if not 0 < input < 4000:
-      raise ValueError, "Argument must be between 1 and 3999"
-   ints = (1000, 900,  500, 400, 100,  90, 50,  40, 10,  9,   5,  4,   1)
-   nums = ('M',  'CM', 'D', 'CD','C', 'XC','L','XL','X','IX','V','IV','I')
-   result = ""
-   for i in range(len(ints)):
-      count = int(input / ints[i])
-      result += nums[i] * count
-      input -= ints[i] * count
-   return result
 
-def roman_to_int(input):
-   """
-   from http://code.activestate.com/recipes/81611-roman-numerals/
-   Convert a roman numeral to an integer.
+atomic_symbols_data = np.recfromtxt(get_data_path('atomic_symbols.dat'),
+                                    names=['atomic_number', 'symbol'])
+symbol2atomic_number = OrderedDict(zip(atomic_symbols_data['symbol'],
+                                       atomic_symbols_data['atomic_number']))
+atomic_number2symbol = OrderedDict(atomic_symbols_data)
 
-   >>> r = range(1, 4000)
-   >>> nums = [int_to_roman(i) for i in r]
-   >>> ints = [roman_to_int(n) for n in nums]
-   >>> print r == ints
-   1
 
-   >>> roman_to_int('VVVIV')
-   Traceback (most recent call last):
+synpp_default_yaml_fname = get_data_path('synpp_default.yaml')
+
+
+def int_to_roman(int_input):
+    """
+    from http://code.activestate.com/recipes/81611-roman-numerals/
+    Convert an integer to Roman numerals.
+
+    :param int_input: an integer between 1 and 3999
+    :returns result: roman equivalent string of passed :param{int_input}
+
+    Examples:
+    >>> int_to_roman(0)
+    Traceback (most recent call last):
+    ValueError: Argument must be between 1 and 3999
+
+    >>> int_to_roman(-1)
+    Traceback (most recent call last):
+    ValueError: Argument must be between 1 and 3999
+
+    >>> int_to_roman(1.5)
+    Traceback (most recent call last):
+    TypeError: expected integer, got <type 'float'>
+
+    >>> for i in range(1, 21): print int_to_roman(i),
     ...
-   ValueError: input is not a valid roman numeral: VVVIV
-   >>> roman_to_int(1)
-   Traceback (most recent call last):
-    ...
-   TypeError: expected string, got <type 'int'>
-   >>> roman_to_int('a')
-   Traceback (most recent call last):
-    ...
-   ValueError: input is not a valid roman numeral: A
-   >>> roman_to_int('IL')
-   Traceback (most recent call last):
-    ...
-   ValueError: input is not a valid roman numeral: IL
-   """
-   if type(input) != type(""):
-      raise TypeError, "expected string, got %s" % type(input)
-   input = input.upper()
-   nums = ['M', 'D', 'C', 'L', 'X', 'V', 'I']
-   ints = [1000, 500, 100, 50,  10,  5,   1]
-   places = []
-   for c in input:
-      if not c in nums:
-         raise ValueError, "input is not a valid roman numeral: %s" % input
-   for i in range(len(input)):
-      c = input[i]
-      value = ints[nums.index(c)]
-      # If the next place holds a larger number, this value is negative.
-      try:
-         nextvalue = ints[nums.index(input[i +1])]
-         if nextvalue > value:
-            value *= -1
-      except IndexError:
-         # there is no next place.
-         pass
-      places.append(value)
-   sum = 0
-   for n in places: sum += n
-   # Easiest test for validity...
-   if int_to_roman(sum) == input:
-      return sum
-   else:
-      raise ValueError, 'input is not a valid roman numeral: %s' % input
+    I II III IV V VI VII VIII IX X XI XII XIII XIV XV XVI XVII XVIII XIX XX
+    >>> print int_to_roman(2000)
+    MM
+    >>> print int_to_roman(1999)
+    MCMXCIX
+    """
+    if not isinstance(int_input, int):
+        raise TypeError("Expected integer, got %s" % type(int_input))
+    if not 0 < int_input < 4000:
+        raise ValueError("Argument must be between 1 and 3999")
+
+    int_roman_tuples = [(1000, 'M'), (900, 'CM'), (500, 'D'), (400, 'CD'),
+                        (100 , 'C'), (90 , 'XC'), (50 , 'L'), (40 , 'XL'),
+                        (10  , 'X'), (9  , 'IX'), (5  , 'V'), (4  , 'IV'), (1, 'I')]
+
+    result = ''
+    for (integer, roman) in int_roman_tuples:
+        count = int(int_input / integer)
+        result += roman * count
+        int_input -= integer * count
+    return result
+
+
+def roman_to_int(roman_input):
+    """
+    from http://code.activestate.com/recipes/81611-roman-numerals/
+    Convert a roman numeral to an integer.
+
+    :param roman_input: a valid roman numeral string
+    :returns sum: equivalent integer of passed :param{roman_input}
+
+    >>> r = range(1, 4000)
+    >>> nums = [int_to_roman(i) for i in r]
+    >>> ints = [roman_to_int(n) for n in nums]
+    >>> print r == ints
+    1
+
+    >>> roman_to_int('VVVIV')
+    Traceback (most recent call last):
+     ...
+    ValueError: input is not a valid roman numeral: VVVIV
+    >>> roman_to_int(1)
+    Traceback (most recent call last):
+     ...
+    TypeError: expected string, got <type 'int'>
+    >>> roman_to_int('a')
+    Traceback (most recent call last):
+     ...
+    ValueError: input is not a valid roman numeral: A
+    >>> roman_to_int('IL')
+    Traceback (most recent call last):
+     ...
+    ValueError: input is not a valid roman numeral: IL
+    """
+    if not isinstance(roman_input, str):
+        raise TypeError("expected string, got %s" % type(roman_input))
+
+    roman_input = roman_input.upper()
+    nums = ['M', 'D', 'C', 'L', 'X', 'V', 'I']
+    ints = [1000, 500, 100, 50,  10,  5,   1]
+    places = []
+    for c in roman_input:
+        if not c in nums:
+            raise ValueError("input is not a valid roman numeral: %s" % roman_input)
+    for i in range(len(roman_input)):
+        c = roman_input[i]
+        value = ints[nums.index(c)]
+        # If the next place holds a larger number, this value is negative.
+        try:
+            nextvalue = ints[nums.index(roman_input[i +1])]
+            if nextvalue > value:
+                value *= -1
+        except IndexError:
+            # there is no next place.
+            pass
+        places.append(value)
+    result = 0
+    for n in places:
+        result += n
+    # Easiest test for validity...
+    if int_to_roman(result) == roman_input:
+        return result
+    else:
+        raise ValueError('input is not a valid roman numeral: %s' % roman_input)
 
 
 def calculate_luminosity(spec_fname, distance, wavelength_column=0, wavelength_unit=u.angstrom, flux_column=1,
@@ -184,7 +195,7 @@ def calculate_luminosity(spec_fname, distance, wavelength_column=0, wavelength_u
 
 def create_synpp_yaml(radial1d_mdl, fname, shell_no=0, lines_db=None):
     logger.warning('Currently only works with Si and a special setup')
-    if not radial1d_mdl.atom_data.has_synpp_refs:
+    if radial1d_mdl.atom_data.synpp_refs is not None:
         raise ValueError(
             'The current atom dataset does not contain the necesarry reference files (please contact the authors)')
 
@@ -192,21 +203,22 @@ def create_synpp_yaml(radial1d_mdl, fname, shell_no=0, lines_db=None):
     for key, value in radial1d_mdl.atom_data.synpp_refs.iterrows():
         try:
             radial1d_mdl.atom_data.synpp_refs['ref_log_tau'].ix[key] = np.log10(
-                radial1d_mdl.plasma_array.tau_sobolevs[0].ix[value['line_id']])
+                radial1d_mdl.plasma.tau_sobolevs[0].ix[value['line_id']])
         except KeyError:
             pass
 
 
     relevant_synpp_refs = radial1d_mdl.atom_data.synpp_refs[radial1d_mdl.atom_data.synpp_refs['ref_log_tau'] > -50]
 
-    yaml_reference = yaml.load(file(synpp_default_yaml_fname))
+    with open(synpp_default_yaml_fname) as stream:
+        yaml_reference = yaml.load(stream)
 
     if lines_db is not None:
         yaml_reference['opacity']['line_dir'] = os.path.join(lines_db, 'lines')
         yaml_reference['opacity']['line_dir'] = os.path.join(lines_db, 'refs.dat')
 
-    yaml_reference['output']['min_wl'] = float(radial1d_mdl.spectrum.wavelength.to('angstrom').value.min())
-    yaml_reference['output']['max_wl'] = float(radial1d_mdl.spectrum.wavelength.to('angstrom').value.max())
+    yaml_reference['output']['min_wl'] = float(radial1d_mdl.runner.spectrum.wavelength.to('angstrom').value.min())
+    yaml_reference['output']['max_wl'] = float(radial1d_mdl.runner.spectrum.wavelength.to('angstrom').value.max())
 
 
     #raise Exception("there's a problem here with units what units does synpp expect?")
@@ -234,8 +246,8 @@ def create_synpp_yaml(radial1d_mdl, fname, shell_no=0, lines_db=None):
         yaml_setup['v_min'].append(yaml_reference['opacity']['v_ref'])
         yaml_setup['v_max'].append(yaml_reference['grid']['v_outer_max'])
         yaml_setup['aux'].append(1e200)
-
-    yaml.dump(yaml_reference, stream=file(fname, 'w'), explicit_start=True)
+    with open(fname, 'w') as f:
+        yaml.dump(yaml_reference, stream=f, explicit_start=True)
 
 
 def intensity_black_body(nu, T):
@@ -327,7 +339,7 @@ def savitzky_golay(y, window_size, order, deriv=0, rate=1):
 
 def species_tuple_to_string(species_tuple, roman_numerals=True):
     atomic_number, ion_number = species_tuple
-    element_symbol = atomic.atomic_number2symbol[atomic_number]
+    element_symbol = atomic_number2symbol[atomic_number]
     if roman_numerals:
         roman_ion_number = int_to_roman(ion_number+1)
         return '%s %s' % (element_symbol, roman_ion_number)
@@ -387,15 +399,15 @@ def parse_quantity(quantity_string):
 
 def element_symbol2atomic_number(element_string):
     reformatted_element_string = reformat_element_symbol(element_string)
-    if reformatted_element_string not in atomic.symbol2atomic_number:
+    if reformatted_element_string not in symbol2atomic_number:
         raise MalformedElementSymbolError(element_string)
-    return atomic.symbol2atomic_number[reformatted_element_string]
+    return symbol2atomic_number[reformatted_element_string]
 
 def atomic_number2element_symbol(atomic_number):
     """
     Convert atomic number to string symbol
     """
-    return atomic.atomic_number2symbol[atomic_number]
+    return atomic_number2symbol[atomic_number]
 
 def reformat_element_symbol(element_string):
     """

@@ -6,7 +6,7 @@ import pandas as pd
 
 from tardis.plasma.properties.base import (PreviousIterationProperty,
                                            ProcessingPlasmaProperty)
-from tardis.plasma.properties import PhiSahaNebular, PhiSahaLTE
+from tardis.plasma.properties.ion_population import PhiSahaNebular
 
 __all__ = ['PreviousElectronDensities', 'PreviousBetaSobolev',
            'HeliumNLTE', 'HeliumNumericalNLTE']
@@ -22,7 +22,10 @@ class PreviousElectronDensities(PreviousIterationProperty):
     outputs = ('previous_electron_densities',)
 
     def set_initial_value(self, kwargs):
-        initial_value = np.ones(len(kwargs['abundance'].columns))*1000000.0
+        initial_value = pd.Series(
+                1000000.0,
+                index=kwargs['abundance'].columns,
+                )
         self._set_initial_value(initial_value)
 
 class PreviousBetaSobolev(PreviousIterationProperty):
@@ -34,18 +37,18 @@ class PreviousBetaSobolev(PreviousIterationProperty):
     outputs = ('previous_beta_sobolev',)
 
     def set_initial_value(self, kwargs):
-        try:
-            lines = len(kwargs['atomic_data'].lines)
-        except:
-            lines = len(kwargs['atomic_data']._lines)
-        initial_value = np.ones((lines,
-            len(kwargs['abundance'].columns)))
+        initial_value = pd.DataFrame(
+                1.,
+                index=kwargs['atomic_data'].lines.index,
+                columns=kwargs['abundance'].columns,
+                )
         self._set_initial_value(initial_value)
 
 class HeliumNLTE(ProcessingPlasmaProperty):
     outputs = ('helium_population',)
 
-    def calculate(self, level_boltzmann_factor, electron_densities,
+    @staticmethod
+    def calculate(level_boltzmann_factor,
         ionization_data, beta_rad, g, g_electron, w, t_rad, t_electrons,
         delta, zeta_data, number_density, partition_function):
         """
@@ -53,53 +56,50 @@ class HeliumNLTE(ProcessingPlasmaProperty):
         """
         helium_population = level_boltzmann_factor.ix[2].copy()
         # He I excited states
-        he_one_population = self.calculate_helium_one(g_electron, beta_rad,
-            ionization_data, level_boltzmann_factor, electron_densities, g, w)
+        he_one_population = HeliumNLTE.calculate_helium_one(g_electron, beta_rad,
+            ionization_data, level_boltzmann_factor, g, w)
         helium_population.ix[0].update(he_one_population)
-        #He I metastable states
-        helium_population.ix[0,1] *= (1 / w)
-        helium_population.ix[0,2] *= (1 / w)
         #He I ground state
         helium_population.ix[0,0] = 0.0
         #He II excited states
         he_two_population = level_boltzmann_factor.ix[2,1].mul(
-            (g.ix[2,1].ix[0]**(-1)))
+            (g.ix[2,1].ix[0]**(-1.0)))
         helium_population.ix[1].update(he_two_population)
         #He II ground state
         helium_population.ix[1,0] = 1.0
         #He III states
-        helium_population.ix[2,0] = self.calculate_helium_three(t_rad, w,
+        helium_population.ix[2,0] = HeliumNLTE.calculate_helium_three(t_rad, w,
             zeta_data, t_electrons, delta, g_electron, beta_rad,
-            ionization_data, electron_densities, g)
-        unnormalised = helium_population.sum()
-        normalised = helium_population.mul(number_density.ix[2] / unnormalised)
-        helium_population.update(normalised)
+            ionization_data, g)
+#        unnormalised = helium_population.sum()
+#        normalised = helium_population.mul(number_density.ix[2] /
+# unnormalised)
+#        helium_population.update(normalised)
         return helium_population
 
     @staticmethod
     def calculate_helium_one(g_electron, beta_rad, ionization_data,
-        level_boltzmann_factor, electron_densities, g, w):
+        level_boltzmann_factor, g, w):
         """
         Calculates the He I level population values, in equilibrium with the He II ground state.
         """
-        return level_boltzmann_factor.ix[2,0].mul(
-            g.ix[2,0], axis=0) * (1./(2*g.ix[2,1,0])) * \
-            (1/g_electron) * (1/(w**2)) * np.exp(
-            ionization_data.ionization_energy.ix[2,1] * beta_rad) * \
-            electron_densities
+        return level_boltzmann_factor.ix[2,0] * (1./(2*g.ix[2,1,0])) * \
+            (1/g_electron) * (1/(w**2.)) * np.exp(
+            ionization_data.loc[2,1] * beta_rad)
 
     @staticmethod
     def calculate_helium_three(t_rad, w, zeta_data, t_electrons, delta,
-        g_electron, beta_rad, ionization_data, electron_densities, g):
+        g_electron, beta_rad, ionization_data, g):
         """
         Calculates the He III level population values.
         """
         zeta = PhiSahaNebular.get_zeta_values(zeta_data, 2, t_rad)[1]
-        he_three_population = (2 / electron_densities) * \
+        he_three_population = 2 * \
             (float(g.ix[2,2,0])/g.ix[2,1,0]) * g_electron * \
-            np.exp(-ionization_data.ionization_energy.ix[2,2] * beta_rad) \
+            np.exp(-ionization_data.loc[2,2] * beta_rad) \
             * w * (delta.ix[2,2] * zeta + w * (1. - zeta)) * \
             (t_electrons / t_rad) ** 0.5
+        return he_three_population
 
 class HeliumNumericalNLTE(ProcessingPlasmaProperty):
     '''
@@ -108,15 +108,20 @@ class HeliumNumericalNLTE(ProcessingPlasmaProperty):
     with Tardis) to work.
     '''
     outputs = ('helium_population',)
+    def __init__(self, plasma_parent, heating_rate_data_file):
+        super(HeliumNumericalNLTE, self).__init__(plasma_parent)
+        self._g_upper = None
+        self._g_lower = None
+        self.heating_rate_data = np.loadtxt(
+            heating_rate_data_file, unpack=True)
+
     def calculate(self, ion_number_density, electron_densities, t_electrons, w,
         lines, j_blues, levels, level_boltzmann_factor, t_rad,
         zeta_data, g_electron, delta, partition_function, ionization_data,
-        beta_rad, g):
+        beta_rad, g, time_explosion):
         logger.info('Performing numerical NLTE He calculations.')
         if len(j_blues)==0:
             return None
-        heating_rate_data = np.loadtxt(
-            self.plasma_parent.heating_rate_data_file, unpack=True)
         #Outputting data required by SH module
         for zone, _ in enumerate(electron_densities):
             with open('He_NLTE_Files/shellconditions_{}.txt'.format(zone),
@@ -124,9 +129,9 @@ class HeliumNumericalNLTE(ProcessingPlasmaProperty):
                 output_file.write(ion_number_density.ix[2].sum()[zone])
                 output_file.write(electron_densities[zone])
                 output_file.write(t_electrons[zone])
-                output_file.write(heating_rate_data[zone])
+                output_file.write(self.heating_rate_data[zone])
                 output_file.write(w[zone])
-                output_file.write(self.plasma_parent.time_explosion)
+                output_file.write(time_explosion)
                 output_file.write(t_rad[zone])
                 output_file.write(self.plasma_parent.v_inner[zone])
                 output_file.write(self.plasma_parent.v_outer[zone])
